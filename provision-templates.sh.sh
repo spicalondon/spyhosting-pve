@@ -176,24 +176,37 @@ make_template() {
 }
 
 # ------------------------------------------------------------
-# 9000 dolu mu kontrol et, doluysa 10000'e geç
+# cluster-wide kontrol: /etc/pve/qemu-server/<id>.conf varsa doludur
+# 9000 doluysa 10000, o da doluysa 11000 ...
 # ------------------------------------------------------------
 pick_vmid_base() {
-  local base_9000_used=0
+  # elle VMID_BASE verdiyse onu kullan
+  if [[ -n "${VMID_BASE:-}" ]]; then
+    echo "$VMID_BASE"
+    return
+  fi
 
-  # 9000, 9001, 9002'den herhangi biri varsa 9000 serisini dolu say
-  for id in 9000 9001 9002; do
-    if qm status "$id" >/dev/null 2>&1; then
-      base_9000_used=1
-      break
+  local candidates=(9000 10000 11000 12000 13000 14000)
+
+  for base in "${candidates[@]}"; do
+    # bu tabandan 3 tane kullanıyoruz: base, base+1, base+2
+    local used=0
+    for off in 0 1 2; do
+      local id=$((base + off))
+      if [[ -f "/etc/pve/qemu-server/${id}.conf" ]]; then
+        used=1
+        break
+      fi
+    done
+
+    if [[ $used -eq 0 ]]; then
+      echo "$base"
+      return
     fi
   done
 
-  if [[ $base_9000_used -eq 1 ]]; then
-    echo 10000
-  else
-    echo 9000
-  fi
+  # hiçbirini bulamazsak
+  echo "none"
 }
 
 # ------------------------------------------------------------
