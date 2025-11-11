@@ -213,6 +213,14 @@ pick_vmid_base() {
     
     # DEBUG: test edelim
     echo "DEBUG: Checking base $base, blacklist file: $blacklist_file" >&2
+    
+    # Explicit test
+    if [[ -f "/tmp/.vmid_base_9000_occupied" ]]; then
+      echo "DEBUG: EXPLICIT TEST: /tmp/.vmid_base_9000_occupied EXISTS" >&2
+    else
+      echo "DEBUG: EXPLICIT TEST: /tmp/.vmid_base_9000_occupied DOES NOT EXIST" >&2
+    fi
+    
     if [[ -f "$blacklist_file" ]]; then
       echo "DEBUG: Base $base is blacklisted, skipping" >&2
       continue
