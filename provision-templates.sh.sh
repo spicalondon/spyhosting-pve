@@ -136,7 +136,11 @@ create_or_update_vm() {
   fi
 
   log "Creating base VM $vmid ($name)"
-  qm create "$vmid" --name "$name" --memory "$mem" --net0 "virtio,bridge=$bridge"
+  if ! qm create "$vmid" --name "$name" --memory "$mem" --net0 "virtio,bridge=$bridge" 2>&1; then
+    log "ERROR: qm create failed for VMID $vmid (VM might exist without config file)"
+    return 2
+  fi
+  return 0
 }
 
 # ------------------------------------------------------------
@@ -204,6 +208,12 @@ pick_vmid_base() {
   local template_count=3  # bu script 3 template yapıyor
 
   for base in "${candidates[@]}"; do
+    # bu base daha önce occupied olarak işaretlendiyse skip et
+    if [[ -f "/tmp/.vmid_base_${base}_occupied" ]]; then
+      log "Base $base daha önce occupied olarak işaretlendi, skip" >&2
+      continue
+    fi
+
     local all_free=1
     # base'den başlayarak template_count kadar VMID'yi kontrol et
     for off in $(seq 0 $((template_count - 1))); do
@@ -245,39 +255,65 @@ log "==> Cloud templates provisioning started on host: $(hostname)"
 ensure_package "wget"
 ensure_dir "$DEFAULT_IMG_DIR"
 
-VMID_BASE=$(pick_vmid_base)
-if [[ "$VMID_BASE" == "none" ]]; then
-  log "UYARI: uygun VMID base bulunamadı (9000/10000/11000 hepsi dolu). Çıkıyorum."
-  exit 1
-fi
-
-log "Using VMID base: $VMID_BASE"
-
-idx=0
-for entry in "${TEMPLATES[@]}"; do
-  IFS="|" read -r VMNAME IMG_URL IMG_FILE STORAGE BRIDGE MEMORY_MB <<<"$entry"
-  VMID=$((VMID_BASE + idx))
-  idx=$((idx + 1))
-
-  IMG_PATH="${DEFAULT_IMG_DIR}/${IMG_FILE}"
-
-  log "--- processing template: $VMID ($VMNAME) ---"
-
-  download_if_missing "$IMG_URL" "$IMG_PATH"
-  customize_cloud_image "$IMG_PATH"
-
-  if ! create_or_update_vm "$VMID" "$VMNAME" "$MEMORY_MB" "$BRIDGE"; then
-    log "Skipping rest for VMID $VMID because it belongs to another node."
-    echo
-    continue
+# retry loop for finding available base
+attempt=0
+max_attempts=5
+while [[ $attempt -lt $max_attempts ]]; do
+  VMID_BASE=$(pick_vmid_base)
+  if [[ "$VMID_BASE" == "none" ]]; then
+    log "UYARI: uygun VMID base bulunamadı. Çıkıyorum."
+    exit 1
   fi
 
-  import_disk_if_needed "$VMID" "$IMG_PATH" "$STORAGE"
-  attach_cloudinit_and_boot "$VMID" "$STORAGE"
-  make_template "$VMID"
+  log "Using VMID base: $VMID_BASE (attempt $((attempt + 1)))"
 
-  log "--- done: $VMID ($VMNAME) ---"
-  echo
-done
+  success=true
+  idx=0
+  for entry in "${TEMPLATES[@]}"; do
+    IFS="|" read -r VMNAME IMG_URL IMG_FILE STORAGE BRIDGE MEMORY_MB <<<"$entry"
+    VMID=$((VMID_BASE + idx))
+    idx=$((idx + 1))
 
-log "✅ All templates processed."
+    IMG_PATH="${DEFAULT_IMG_DIR}/${IMG_FILE}"
+
+    log "--- processing template: $VMID ($VMNAME) ---"
+
+    download_if_missing "$IMG_URL" "$IMG_PATH"
+    customize_cloud_image "$IMG_PATH"
+
+    create_result=0
+    create_or_update_vm "$VMID" "$VMNAME" "$MEMORY_MB" "$BRIDGE" || create_result=$?
+
+    if [[ $create_result -eq 1 ]]; then
+      log "Skipping VMID $VMID (belongs to another node)"
+      echo
+      continue
+    elif [[ $create_result -eq 2 ]]; then
+      log "VM creation failed for $VMID, marking base $VMID_BASE as occupied"
+      # bu base'deki bir VMID kullanılıyor, config dosyası olmasa bile
+      # base'i blacklist'e ekle ve yeni base dene
+      touch "/tmp/.vmid_base_${VMID_BASE}_occupied"
+      success=false
+      break
+    fi
+
+    import_disk_if_needed "$VMID" "$IMG_PATH" "$STORAGE"
+    attach_cloudinit_and_boot "$VMID" "$STORAGE"
+    make_template "$VMID"
+
+    log "--- done: $VMID ($VMNAME) ---"
+    echo
+  done
+
+  if [[ "$success" == "true" ]]; then
+    log "✅ All templates processed successfully."
+    exit 0
+  fi
+
+
+
+
+
+
+
+log "ERROR: Could not find available VMID base after $max_attempts attempts"done  attempt=$((attempt + 1))  log "Retrying with next available base..."  # başarısız olduysa, bu base'i skip et ve tekrar deneexit 1
