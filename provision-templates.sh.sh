@@ -210,8 +210,14 @@ pick_vmid_base() {
   for base in "${candidates[@]}"; do
     # bu base daha önce occupied olarak işaretlendiyse skip et
     local blacklist_file="/tmp/.vmid_base_${base}_occupied"
+    
+    # DEBUG: test edelim
+    echo "DEBUG: Checking base $base, blacklist file: $blacklist_file" >&2
     if [[ -f "$blacklist_file" ]]; then
+      echo "DEBUG: Base $base is blacklisted, skipping" >&2
       continue
+    else
+      echo "DEBUG: Base $base is NOT blacklisted" >&2
     fi
 
     local all_free=1
@@ -220,6 +226,7 @@ pick_vmid_base() {
       local id=$((base + off))
       # cluster'da bu VMID varsa (herhangi bir node'da)
       if [[ -f "/etc/pve/qemu-server/${id}.conf" ]]; then
+        echo "DEBUG: VMID $id has config file, base $base not available" >&2
         all_free=0
         break
       fi
@@ -227,6 +234,7 @@ pick_vmid_base() {
     
     # bu base'deki tüm VMID'ler boşsa, bunu kullan
     if [[ $all_free -eq 1 ]]; then
+      echo "DEBUG: Base $base selected!" >&2
       echo "$base"
       return
     fi
