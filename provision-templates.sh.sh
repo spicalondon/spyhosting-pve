@@ -268,13 +268,15 @@ ensure_dir "$DEFAULT_IMG_DIR"
 attempt=0
 max_attempts=5
 while [[ $attempt -lt $max_attempts ]]; do
+  log "=== Attempt $((attempt + 1)) of $max_attempts ==="
   VMID_BASE=$(pick_vmid_base)
+  
   if [[ "$VMID_BASE" == "none" ]]; then
     log "UYARI: uygun VMID base bulunamadı. Çıkıyorum."
     exit 1
   fi
 
-  log "Using VMID base: $VMID_BASE (attempt $((attempt + 1)))"
+  log "Selected VMID base: $VMID_BASE"
 
   success=true
   idx=0
@@ -308,6 +310,8 @@ while [[ $attempt -lt $max_attempts ]]; do
       if [[ -f "$blacklist_file" ]]; then
         log "✓ Blacklist file created: $blacklist_file"
         ls -la "$blacklist_file"
+        log "Current blacklist files:"
+        ls -la /tmp/.vmid_base_*_occupied 2>/dev/null || log "  (none)"
       else
         log "✗ FAILED to create blacklist file: $blacklist_file"
       fi
@@ -329,7 +333,9 @@ while [[ $attempt -lt $max_attempts ]]; do
   fi
 
   # başarısız olduysa, bu base'i skip et ve tekrar dene
-  log "Retrying with next available base..."
+  log "Base $VMID_BASE failed, will retry with next available base..."
+  log "Sleeping 2 seconds before retry..."
+  sleep 2
   attempt=$((attempt + 1))
 done
 
