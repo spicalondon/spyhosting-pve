@@ -207,16 +207,10 @@ pick_vmid_base() {
   local candidates=(9000 10000 11000 12000 13000 14000)
   local template_count=3  # bu script 3 template yapıyor
 
-  log "Checking for blacklisted bases in /tmp/:" >&2
-  ls -la /tmp/.vmid_base_*_occupied 2>/dev/null | while read -r line; do
-    log "  Found: $line" >&2
-  done || log "  No blacklist files found" >&2
-
   for base in "${candidates[@]}"; do
     # bu base daha önce occupied olarak işaretlendiyse skip et
     local blacklist_file="/tmp/.vmid_base_${base}_occupied"
     if [[ -f "$blacklist_file" ]]; then
-      log "Base $base blacklist'te (dosya: $blacklist_file), SKIPPING" >&2
       continue
     fi
 
@@ -226,7 +220,6 @@ pick_vmid_base() {
       local id=$((base + off))
       # cluster'da bu VMID varsa (herhangi bir node'da)
       if [[ -f "/etc/pve/qemu-server/${id}.conf" ]]; then
-        log "VMID $id cluster'da zaten var, base $base uygun değil" >&2
         all_free=0
         break
       fi
@@ -234,7 +227,6 @@ pick_vmid_base() {
     
     # bu base'deki tüm VMID'ler boşsa, bunu kullan
     if [[ $all_free -eq 1 ]]; then
-      log "Base $base seçildi (VMID $base-$((base + template_count - 1)) hepsi boş)" >&2
       echo "$base"
       return
     fi
@@ -269,6 +261,17 @@ attempt=0
 max_attempts=5
 while [[ $attempt -lt $max_attempts ]]; do
   log "=== Attempt $((attempt + 1)) of $max_attempts ==="
+  
+  # blacklist durumunu göster
+  log "Current blacklist status:"
+  if ls /tmp/.vmid_base_*_occupied >/dev/null 2>&1; then
+    for f in /tmp/.vmid_base_*_occupied; do
+      log "  - $(basename "$f")"
+    done
+  else
+    log "  (no blacklisted bases)"
+  fi
+  
   VMID_BASE=$(pick_vmid_base)
   
   if [[ "$VMID_BASE" == "none" ]]; then
