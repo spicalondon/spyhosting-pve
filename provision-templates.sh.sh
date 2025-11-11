@@ -210,7 +210,7 @@ pick_vmid_base() {
       local id=$((base + off))
       # cluster'da bu VMID varsa (herhangi bir node'da)
       if [[ -f "/etc/pve/qemu-server/${id}.conf" ]]; then
-        log "VMID $id cluster'da zaten var, base $base uygun değil"
+        log "VMID $id cluster'da zaten var, base $base uygun değil" >&2
         all_free=0
         break
       fi
@@ -218,7 +218,7 @@ pick_vmid_base() {
     
     # bu base'deki tüm VMID'ler boşsa, bunu kullan
     if [[ $all_free -eq 1 ]]; then
-      log "Base $base seçildi (VMID $base-$((base + template_count - 1)) hepsi boş)"
+      log "Base $base seçildi (VMID $base-$((base + template_count - 1)) hepsi boş)" >&2
       echo "$base"
       return
     fi
