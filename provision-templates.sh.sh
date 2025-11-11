@@ -280,7 +280,14 @@ while [[ $attempt -lt $max_attempts ]]; do
     log "  (no blacklisted bases)"
   fi
   
-  VMID_BASE=$(pick_vmid_base)
+  # Manuel test: 9000 blacklist'te mi?
+  if [[ -f "/tmp/.vmid_base_9000_occupied" ]]; then
+    log "MANUAL CHECK: Base 9000 IS blacklisted (file exists)"
+  else
+    log "MANUAL CHECK: Base 9000 is NOT blacklisted (file does not exist)"
+  fi
+  
+  VMID_BASE=$(pick_vmid_base 2>&1)
   
   if [[ "$VMID_BASE" == "none" ]]; then
     log "UYARI: uygun VMID base bulunamadı. Çıkıyorum."
