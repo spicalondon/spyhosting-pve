@@ -209,8 +209,9 @@ pick_vmid_base() {
 
   for base in "${candidates[@]}"; do
     # bu base daha önce occupied olarak işaretlendiyse skip et
-    if [[ -f "/tmp/.vmid_base_${base}_occupied" ]]; then
-      log "Base $base daha önce occupied olarak işaretlendi, skip" >&2
+    local blacklist_file="/tmp/.vmid_base_${base}_occupied"
+    if [[ -f "$blacklist_file" ]]; then
+      log "Base $base blacklist'te (dosya: $blacklist_file), skip ediliyor" >&2
       continue
     fi
 
@@ -252,6 +253,9 @@ TEMPLATES=(
 # ------------------------------------------------------------
 log "==> Cloud templates provisioning started on host: $(hostname)"
 
+# temiz başlangıç: eski blacklist dosyalarını sil
+rm -f /tmp/.vmid_base_*_occupied
+
 ensure_package "wget"
 ensure_dir "$DEFAULT_IMG_DIR"
 
@@ -289,10 +293,15 @@ while [[ $attempt -lt $max_attempts ]]; do
       echo
       continue
     elif [[ $create_result -eq 2 ]]; then
-      log "VM creation failed for $VMID, marking base $VMID_BASE as occupied"
-      # bu base'deki bir VMID kullanılıyor, config dosyası olmasa bile
-      # base'i blacklist'e ekle ve yeni base dene
-      touch "/tmp/.vmid_base_${VMID_BASE}_occupied"
+      local blacklist_file="/tmp/.vmid_base_${VMID_BASE}_occupied"
+      log "VM creation failed for $VMID, marking base $VMID_BASE as occupied (file: $blacklist_file)"
+      touch "$blacklist_file"
+      # dosya gerçekten oluşturuldu mu kontrol et
+      if [[ -f "$blacklist_file" ]]; then
+        log "Blacklist file created successfully: $blacklist_file"
+      else
+        log "WARNING: Failed to create blacklist file: $blacklist_file"
+      fi
       success=false
       break
     fi
