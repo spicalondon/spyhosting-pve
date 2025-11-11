@@ -287,7 +287,8 @@ while [[ $attempt -lt $max_attempts ]]; do
     log "MANUAL CHECK: Base 9000 is NOT blacklisted (file does not exist)"
   fi
   
-  VMID_BASE=$(pick_vmid_base 2>&1)
+  # Sadece stdout yakala, stderr terminale gitsin (debug için)
+  VMID_BASE=$(pick_vmid_base)
   
   if [[ "$VMID_BASE" == "none" ]]; then
     log "UYARI: uygun VMID base bulunamadı. Çıkıyorum."
