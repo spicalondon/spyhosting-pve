@@ -130,14 +130,13 @@ create_or_update_vm() {
       log "VMID $vmid cluster'da var ama node '$owner_node' üzerinde, bu node'da create etmiyorum."
       return 1
     fi
+    
+    log "VMID $vmid already exists on this node, will only update config."
+    return 0
   fi
 
-  if qm status "$vmid" >/dev/null 2>&1; then
-    log "VMID $vmid already exists on this node, will only update config."
-  else
-    log "Creating base VM $vmid ($name)"
-    qm create "$vmid" --name "$name" --memory "$mem" --net0 "virtio,bridge=$bridge"
-  fi
+  log "Creating base VM $vmid ($name)"
+  qm create "$vmid" --name "$name" --memory "$mem" --net0 "virtio,bridge=$bridge"
 }
 
 # ------------------------------------------------------------
@@ -253,36 +252,6 @@ if [[ "$VMID_BASE" == "none" ]]; then
 fi
 
 log "Using VMID base: $VMID_BASE"
-
-idx=0
-for entry in "${TEMPLATES[@]}"; do
-  IFS="|" read -r VMNAME IMG_URL IMG_FILE STORAGE BRIDGE MEMORY_MB <<<"$entry"
-  VMID=$((VMID_BASE + idx))
-  idx=$((idx + 1))
-
-  IMG_PATH="${DEFAULT_IMG_DIR}/${IMG_FILE}"
-
-  log "--- processing template: $VMID ($VMNAME) ---"
-
-  download_if_missing "$IMG_URL" "$IMG_PATH"
-  customize_cloud_image "$IMG_PATH"
-
-  # create başarısız olduysa (başka node'da varsa) bu template'i atla
-  if ! create_or_update_vm "$VMID" "$VMNAME" "$MEMORY_MB" "$BRIDGE"; then
-    log "Skipping rest for VMID $VMID because it belongs to another node."
-    echo
-    continue
-  fi
-
-  import_disk_if_needed "$VMID" "$IMG_PATH" "$STORAGE"
-  attach_cloudinit_and_boot("$VMID" "$STORAGE")  # <-- bash'te parantez değil boşluk :)
-done
-
-# yukarıdaki küçük typo'yu düzeltelim:
-# attach_cloudinit_and_boot "$VMID" "$STORAGE"
-# make_template "$VMID"
-
-# yukarıdaki loop'u tekrar düzgün yazıyorum:
 
 idx=0
 for entry in "${TEMPLATES[@]}"; do
