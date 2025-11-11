@@ -310,10 +310,10 @@ while [[ $attempt -lt $max_attempts ]]; do
     exit 0
   fi
 
+  # başarısız olduysa, bu base'i skip et ve tekrar dene
+  log "Retrying with next available base..."
+  attempt=$((attempt + 1))
+done
 
-
-
-
-
-
-log "ERROR: Could not find available VMID base after $max_attempts attempts"done  attempt=$((attempt + 1))  log "Retrying with next available base..."  # başarısız olduysa, bu base'i skip et ve tekrar deneexit 1
+log "ERROR: Could not find available VMID base after $max_attempts attempts"
+exit 1
