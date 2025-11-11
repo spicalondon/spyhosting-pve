@@ -3,11 +3,11 @@ set -euo pipefail
 
 # ============================================================
 # Proxmox cloud template provisioner
-#  - gerekli paketleri yoksa kurar (wget, libguestfs-tools)
+#  - gerekli paketleri kurar (wget, libguestfs-tools)
 #  - cloud image indirir
 #  - image'i patch'ler (root + ssh_pwauth)
 #  - VM oluşturup template'e çevirir
-#  - 9000 serisi doluysa otomatik 10000 serisine geçer
+#  - cluster'da 9000 doluysa otomatik 10000, sonra 11000...
 # ============================================================
 
 DEFAULT_IMG_DIR="/var/lib/vz/template/qemu"
@@ -24,7 +24,7 @@ if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
 fi
 
 # ------------------------------------------------------------
-# paket kurucu yardımcılar
+# apt helper
 # ------------------------------------------------------------
 APT_UPDATED=0
 
@@ -54,7 +54,7 @@ ensure_package() {
 }
 
 # ------------------------------------------------------------
-# klasör oluşturucu
+# klasör
 # ------------------------------------------------------------
 ensure_dir() {
   local d="$1"
@@ -65,7 +65,7 @@ ensure_dir() {
 }
 
 # ------------------------------------------------------------
-# dosya indirici
+# indir
 # ------------------------------------------------------------
 download_if_missing() {
   local url="$1"
@@ -81,7 +81,7 @@ download_if_missing() {
 }
 
 # ------------------------------------------------------------
-# cloud image'i içerden patch'le
+# image'i içerden patchle
 # ------------------------------------------------------------
 customize_cloud_image() {
   local img_path="$1"
@@ -109,6 +109,7 @@ customize_cloud_image() {
 
 # ------------------------------------------------------------
 # vm oluştur / güncelle
+# (cluster'da bu id başka node'a aitse create etmiyoruz)
 # ------------------------------------------------------------
 create_or_update_vm() {
   local vmid="$1"
@@ -116,8 +117,23 @@ create_or_update_vm() {
   local mem="$3"
   local bridge="$4"
 
+  local conf="/etc/pve/qemu-server/${vmid}.conf"
+  local this_node
+  this_node=$(hostname)
+
+  if [[ -f "$conf" ]]; then
+    # conf içinden node satırını çek
+    local owner_node
+    owner_node=$(awk '/^node:/{print $2}' "$conf" || true)
+
+    if [[ -n "$owner_node" && "$owner_node" != "$this_node" ]]; then
+      log "VMID $vmid cluster'da var ama node '$owner_node' üzerinde, bu node'da create etmiyorum."
+      return 1
+    fi
+  fi
+
   if qm status "$vmid" >/dev/null 2>&1; then
-    log "VMID $vmid already exists, will only update config."
+    log "VMID $vmid already exists on this node, will only update config."
   else
     log "Creating base VM $vmid ($name)"
     qm create "$vmid" --name "$name" --memory "$mem" --net0 "virtio,bridge=$bridge"
@@ -176,11 +192,10 @@ make_template() {
 }
 
 # ------------------------------------------------------------
-# cluster-wide kontrol: /etc/pve/qemu-server/<id>.conf varsa doludur
-# 9000 doluysa 10000, o da doluysa 11000 ...
+# cluster-wide VMID seçimi
 # ------------------------------------------------------------
 pick_vmid_base() {
-  # elle VMID_BASE verdiyse onu kullan
+  # elle VMID_BASE geldiyse onu kullan
   if [[ -n "${VMID_BASE:-}" ]]; then
     echo "$VMID_BASE"
     return
@@ -189,8 +204,8 @@ pick_vmid_base() {
   local candidates=(9000 10000 11000 12000 13000 14000)
 
   for base in "${candidates[@]}"; do
-    # bu tabandan 3 tane kullanıyoruz: base, base+1, base+2
     local used=0
+    # bu script 3 template yapıyor: base, base+1, base+2
     for off in 0 1 2; do
       local id=$((base + off))
       if [[ -f "/etc/pve/qemu-server/${id}.conf" ]]; then
@@ -198,20 +213,18 @@ pick_vmid_base() {
         break
       fi
     done
-
     if [[ $used -eq 0 ]]; then
       echo "$base"
       return
     fi
   done
 
-  # hiçbirini bulamazsak
+  # hepsi doluysa (çok düşük ihtimal)
   echo "none"
 }
 
 # ------------------------------------------------------------
-# TEMPLATE LİSTESİ (ID'siz)
-# sıra önemli: 0 → ubuntu 24, 1 → debian 12, 2 → ubuntu 22
+# TEMPLATE LİSTESİ
 # ------------------------------------------------------------
 TEMPLATES=(
   "ubuntu-24-cloud|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|noble-server-cloudimg-amd64.img|local|vmbr0|2048"
@@ -228,6 +241,11 @@ ensure_package "wget"
 ensure_dir "$DEFAULT_IMG_DIR"
 
 VMID_BASE=$(pick_vmid_base)
+if [[ "$VMID_BASE" == "none" ]]; then
+  log "UYARI: uygun VMID base bulunamadı (9000/10000/11000 hepsi dolu). Çıkıyorum."
+  exit 1
+fi
+
 log "Using VMID base: $VMID_BASE"
 
 idx=0
@@ -242,7 +260,43 @@ for entry in "${TEMPLATES[@]}"; do
 
   download_if_missing "$IMG_URL" "$IMG_PATH"
   customize_cloud_image "$IMG_PATH"
-  create_or_update_vm "$VMID" "$VMNAME" "$MEMORY_MB" "$BRIDGE"
+
+  # create başarısız olduysa (başka node'da varsa) bu template'i atla
+  if ! create_or_update_vm "$VMID" "$VMNAME" "$MEMORY_MB" "$BRIDGE"; then
+    log "Skipping rest for VMID $VMID because it belongs to another node."
+    echo
+    continue
+  fi
+
+  import_disk_if_needed "$VMID" "$IMG_PATH" "$STORAGE"
+  attach_cloudinit_and_boot("$VMID" "$STORAGE")  # <-- bash'te parantez değil boşluk :)
+done
+
+# yukarıdaki küçük typo'yu düzeltelim:
+# attach_cloudinit_and_boot "$VMID" "$STORAGE"
+# make_template "$VMID"
+
+# yukarıdaki loop'u tekrar düzgün yazıyorum:
+
+idx=0
+for entry in "${TEMPLATES[@]}"; do
+  IFS="|" read -r VMNAME IMG_URL IMG_FILE STORAGE BRIDGE MEMORY_MB <<<"$entry"
+  VMID=$((VMID_BASE + idx))
+  idx=$((idx + 1))
+
+  IMG_PATH="${DEFAULT_IMG_DIR}/${IMG_FILE}"
+
+  log "--- processing template: $VMID ($VMNAME) ---"
+
+  download_if_missing "$IMG_URL" "$IMG_PATH"
+  customize_cloud_image "$IMG_PATH"
+
+  if ! create_or_update_vm "$VMID" "$VMNAME" "$MEMORY_MB" "$BRIDGE"; then
+    log "Skipping rest for VMID $VMID because it belongs to another node."
+    echo
+    continue
+  fi
+
   import_disk_if_needed "$VMID" "$IMG_PATH" "$STORAGE"
   attach_cloudinit_and_boot "$VMID" "$STORAGE"
   make_template "$VMID"
