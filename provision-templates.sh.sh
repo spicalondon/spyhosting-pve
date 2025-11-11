@@ -103,8 +103,8 @@ customize_cloud_image() {
     --edit '/etc/cloud/cloud.cfg:s/^disable_root:.*$/disable_root: false/;' \
     --edit '/etc/cloud/cloud.cfg:s/^ssh_pwauth:.*$/ssh_pwauth: true/;' \
     --append-line '/etc/cloud/cloud.cfg:ssh_pwauth: true' \
-    --append-line '/etc/cloud/cloud.cfg:disable_root: false' \
     --run-command 'chown root:root /etc/cloud/cloud.cfg'
+    # --append-line '/etc/cloud/cloud.cfg:disable_root: false' \
 }
 
 # ------------------------------------------------------------
