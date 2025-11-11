@@ -7,7 +7,7 @@ set -euo pipefail
 #  - cloud image indirir
 #  - image'i patch'ler (root + ssh_pwauth)
 #  - VM oluşturup template'e çevirir
-#  - cluster'da 9000 doluysa otomatik 10000, sonra 11000...
+#  - cluster'da 9000 doluysa 10000, o da doluysa 11000 ...
 # ============================================================
 
 DEFAULT_IMG_DIR="/var/lib/vz/template/qemu"
@@ -19,15 +19,14 @@ log() { echo "[$(date +%H:%M:%S)] $*"; }
 
 # root kontrolü
 if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-  echo "bu script root olarak çalışmalı (sudo ./script.sh)"
+  echo "bu script root olarak çalışmalı (sudo ./provision-templates.sh)"
   exit 1
 fi
 
 # ------------------------------------------------------------
-# apt helper
+# APT helper
 # ------------------------------------------------------------
 APT_UPDATED=0
-
 apt_update_once() {
   if [[ $APT_UPDATED -eq 0 ]]; then
     log "Running apt-get update (first and only time)..."
@@ -38,7 +37,6 @@ apt_update_once() {
 
 ensure_package() {
   local pkg="$1"
-
   if dpkg -s "$pkg" >/dev/null 2>&1; then
     return
   fi
@@ -108,29 +106,25 @@ customize_cloud_image() {
 }
 
 # ------------------------------------------------------------
-# vm oluştur / güncelle
-# (cluster'da bu id başka node'a aitse create etmiyoruz)
+# cluster'da bu VMID var mı? (tüm node'ları görerek)
+# ------------------------------------------------------------
+has_vmid_cluster() {
+  local id="$1"
+  # pvesh JSON döndürüyor, basit grep yeter
+  if pvesh get /cluster/resources --type vm --output-format json 2>/dev/null | grep -q "\"vmid\": ${id}"; then
+    return 0
+  fi
+  return 1
+}
+
+# ------------------------------------------------------------
+# vm oluştur / güncelle (bu node'da)
 # ------------------------------------------------------------
 create_or_update_vm() {
   local vmid="$1"
   local name="$2"
   local mem="$3"
   local bridge="$4"
-
-  local conf="/etc/pve/qemu-server/${vmid}.conf"
-  local this_node
-  this_node=$(hostname)
-
-  if [[ -f "$conf" ]]; then
-    # conf içinden node satırını çek
-    local owner_node
-    owner_node=$(awk '/^node:/{print $2}' "$conf" || true)
-
-    if [[ -n "$owner_node" && "$owner_node" != "$this_node" ]]; then
-      log "VMID $vmid cluster'da var ama node '$owner_node' üzerinde, bu node'da create etmiyorum."
-      return 1
-    fi
-  fi
 
   if qm status "$vmid" >/dev/null 2>&1; then
     log "VMID $vmid already exists on this node, will only update config."
@@ -141,7 +135,7 @@ create_or_update_vm() {
 }
 
 # ------------------------------------------------------------
-# diski import et
+# disk import
 # ------------------------------------------------------------
 import_disk_if_needed() {
   local vmid="$1"
@@ -192,10 +186,10 @@ make_template() {
 }
 
 # ------------------------------------------------------------
-# cluster-wide VMID seçimi
+# 9000/10000/... seç
 # ------------------------------------------------------------
 pick_vmid_base() {
-  # elle VMID_BASE geldiyse onu kullan
+  # elle verildiyse kullan
   if [[ -n "${VMID_BASE:-}" ]]; then
     echo "$VMID_BASE"
     return
@@ -205,10 +199,9 @@ pick_vmid_base() {
 
   for base in "${candidates[@]}"; do
     local used=0
-    # bu script 3 template yapıyor: base, base+1, base+2
     for off in 0 1 2; do
       local id=$((base + off))
-      if [[ -f "/etc/pve/qemu-server/${id}.conf" ]]; then
+      if has_vmid_cluster "$id"; then
         used=1
         break
       fi
@@ -219,7 +212,6 @@ pick_vmid_base() {
     fi
   done
 
-  # hepsi doluysa (çok düşük ihtimal)
   echo "none"
 }
 
@@ -242,10 +234,9 @@ ensure_dir "$DEFAULT_IMG_DIR"
 
 VMID_BASE=$(pick_vmid_base)
 if [[ "$VMID_BASE" == "none" ]]; then
-  log "UYARI: uygun VMID base bulunamadı (9000/10000/11000 hepsi dolu). Çıkıyorum."
+  log "UYARI: 9000/10000/11000 ... hepsi cluster'da dolu görünüyor. Çıkıyorum."
   exit 1
 fi
-
 log "Using VMID base: $VMID_BASE"
 
 idx=0
@@ -261,41 +252,8 @@ for entry in "${TEMPLATES[@]}"; do
   download_if_missing "$IMG_URL" "$IMG_PATH"
   customize_cloud_image "$IMG_PATH"
 
-  # create başarısız olduysa (başka node'da varsa) bu template'i atla
-  if ! create_or_update_vm "$VMID" "$VMNAME" "$MEMORY_MB" "$BRIDGE"; then
-    log "Skipping rest for VMID $VMID because it belongs to another node."
-    echo
-    continue
-  fi
-
-  import_disk_if_needed "$VMID" "$IMG_PATH" "$STORAGE"
-  attach_cloudinit_and_boot("$VMID" "$STORAGE")  # <-- bash'te parantez değil boşluk :)
-done
-
-# yukarıdaki küçük typo'yu düzeltelim:
-# attach_cloudinit_and_boot "$VMID" "$STORAGE"
-# make_template "$VMID"
-
-# yukarıdaki loop'u tekrar düzgün yazıyorum:
-
-idx=0
-for entry in "${TEMPLATES[@]}"; do
-  IFS="|" read -r VMNAME IMG_URL IMG_FILE STORAGE BRIDGE MEMORY_MB <<<"$entry"
-  VMID=$((VMID_BASE + idx))
-  idx=$((idx + 1))
-
-  IMG_PATH="${DEFAULT_IMG_DIR}/${IMG_FILE}"
-
-  log "--- processing template: $VMID ($VMNAME) ---"
-
-  download_if_missing "$IMG_URL" "$IMG_PATH"
-  customize_cloud_image "$IMG_PATH"
-
-  if ! create_or_update_vm "$VMID" "$VMNAME" "$MEMORY_MB" "$BRIDGE"; then
-    log "Skipping rest for VMID $VMID because it belongs to another node."
-    echo
-    continue
-  fi
+  # create
+  create_or_update_vm "$VMID" "$VMNAME" "$MEMORY_MB" "$BRIDGE"
 
   import_disk_if_needed "$VMID" "$IMG_PATH" "$STORAGE"
   attach_cloudinit_and_boot "$VMID" "$STORAGE"
