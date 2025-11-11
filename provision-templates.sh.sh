@@ -278,6 +278,9 @@ max_attempts=5
 while [[ $attempt -lt $max_attempts ]]; do
   log "=== Attempt $((attempt + 1)) of $max_attempts ==="
   
+  # Her attempt'te VMID_BASE'i temizle
+  unset VMID_BASE
+  
   # blacklist durumunu göster
   log "Current blacklist status:"
   if ls /tmp/.vmid_base_*_occupied >/dev/null 2>&1; then
@@ -296,7 +299,9 @@ while [[ $attempt -lt $max_attempts ]]; do
   fi
   
   # Sadece stdout yakala, stderr terminale gitsin (debug için)
+  log "About to call pick_vmid_base()..."
   VMID_BASE=$(pick_vmid_base)
+  log "pick_vmid_base() returned: $VMID_BASE"
   
   if [[ "$VMID_BASE" == "none" ]]; then
     log "UYARI: uygun VMID base bulunamadı. Çıkıyorum."
