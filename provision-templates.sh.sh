@@ -207,11 +207,16 @@ pick_vmid_base() {
   local candidates=(9000 10000 11000 12000 13000 14000)
   local template_count=3  # bu script 3 template yapıyor
 
+  log "Checking for blacklisted bases in /tmp/:" >&2
+  ls -la /tmp/.vmid_base_*_occupied 2>/dev/null | while read -r line; do
+    log "  Found: $line" >&2
+  done || log "  No blacklist files found" >&2
+
   for base in "${candidates[@]}"; do
     # bu base daha önce occupied olarak işaretlendiyse skip et
     local blacklist_file="/tmp/.vmid_base_${base}_occupied"
     if [[ -f "$blacklist_file" ]]; then
-      log "Base $base blacklist'te (dosya: $blacklist_file), skip ediliyor" >&2
+      log "Base $base blacklist'te (dosya: $blacklist_file), SKIPPING" >&2
       continue
     fi
 
@@ -293,14 +298,18 @@ while [[ $attempt -lt $max_attempts ]]; do
       echo
       continue
     elif [[ $create_result -eq 2 ]]; then
-      local blacklist_file="/tmp/.vmid_base_${VMID_BASE}_occupied"
-      log "VM creation failed for $VMID, marking base $VMID_BASE as occupied (file: $blacklist_file)"
-      touch "$blacklist_file"
+      blacklist_file="/tmp/.vmid_base_${VMID_BASE}_occupied"
+      log "VM creation failed for $VMID, marking base $VMID_BASE as occupied"
+      log "Creating blacklist file: $blacklist_file"
+      touch "$blacklist_file" || log "ERROR: touch command failed!"
+      chmod 666 "$blacklist_file" 2>/dev/null || true
+      
       # dosya gerçekten oluşturuldu mu kontrol et
       if [[ -f "$blacklist_file" ]]; then
-        log "Blacklist file created successfully: $blacklist_file"
+        log "✓ Blacklist file created: $blacklist_file"
+        ls -la "$blacklist_file"
       else
-        log "WARNING: Failed to create blacklist file: $blacklist_file"
+        log "✗ FAILED to create blacklist file: $blacklist_file"
       fi
       success=false
       break
