@@ -21,8 +21,9 @@ set -euo pipefail
 # ------------------------------------------------------------
 TEMPLATES=(
   "ubuntu-24-cloud|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|noble-server-cloudimg-amd64.img|local-lvm|vmbr0|2048"
-  "debian-12-cloud|https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2|debian-12-genericcloud-amd64.qcow2|local-lvm|vmbr0|2048"
   "ubuntu-22-cloud|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|jammy-server-cloudimg-amd64.img|local-lvm|vmbr0|2048"
+  "ubuntu-20-cloud|https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64.img|focal-server-cloudimg-amd64.img|local-lvm|vmbr0|2048"
+  "debian-12-cloud|https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2|debian-12-genericcloud-amd64.qcow2|local-lvm|vmbr0|2048"
 )
 
 MIN_TEMPLATE_VMID=100
@@ -273,6 +274,26 @@ make_template() {
 }
 
 # ------------------------------------------------------------
+# template var mı kontrol et
+# ------------------------------------------------------------
+is_template_exists() {
+  local vmid="$1"
+  local conf="/etc/pve/qemu-server/${vmid}.conf"
+
+  # config dosyası var mı?
+  if [[ ! -f "$conf" ]]; then
+    return 1  # yok
+  fi
+
+  # template mi kontrol et
+  if grep -q "^template:" "$conf" 2>/dev/null; then
+    return 0  # template var
+  fi
+
+  return 1  # config var ama template değil
+}
+
+# ------------------------------------------------------------
 # cluster-wide VMID seçimi - cluster'daki tüm node'larda boş base ara
 #  - base'leri 100, 200, 300, ... şeklinde dener
 #  - tüm template'ler için contiguous blok bulur
@@ -486,9 +507,18 @@ while [[ $attempt -lt $max_attempts ]]; do
     # VM adını t{VMID}-{TEMPLATE_NAME} formatında oluştur
     VM_DISPLAY_NAME="t${VMID}-${VMNAME}"
 
-    IMG_PATH="${DEFAULT_IMG_DIR}/${IMG_FILE}"
+    log "--- checking template: $VMID ($VM_DISPLAY_NAME) ---"
 
-    log "--- processing template: $VMID ($VM_DISPLAY_NAME) ---"
+    # Template zaten var mı kontrol et
+    if is_template_exists "$VMID"; then
+      log "✓ Template already exists for VMID $VMID, skipping..."
+      echo
+      continue
+    fi
+
+    log "✗ Template missing for VMID $VMID, installing..."
+
+    IMG_PATH="${DEFAULT_IMG_DIR}/${IMG_FILE}"
 
     download_if_missing "$IMG_URL" "$IMG_PATH"
     customize_cloud_image "$IMG_PATH"
@@ -506,7 +536,7 @@ while [[ $attempt -lt $max_attempts ]]; do
       log "Creating blacklist file: $blacklist_file"
       touch "$blacklist_file" || log "ERROR: touch command failed!"
       chmod 666 "$blacklist_file" 2>/dev/null || true
-      
+
       # dosya gerçekten oluşturuldu mu kontrol et
       if [[ -f "$blacklist_file" ]]; then
         log "✓ Blacklist file created: $blacklist_file"
