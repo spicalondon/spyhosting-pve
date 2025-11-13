@@ -7,14 +7,26 @@ set -euo pipefail
 #  - cloud image indirir
 #  - image'i patch'ler (root + ssh_pwauth)
 #  - VM oluşturup template'e çevirir
-#  - cluster'da 9000 doluysa otomatik 10000, sonra 11000...
+#  - cluster'da 100 doluysa otomatik 200, sonra 300...
 #
 # Kullanım:
-#   ./provision-templates.sh.sh                           # tüm template'leri sırayla kur
-#   ./provision-templates.sh.sh --templates 0,2           # sadece 0 ve 2 numaralı template'leri kur
-#   ./provision-templates.sh.sh --templates debian-12,ubuntu-24  # isme göre seçim
-#   ./provision-templates.sh.sh --order 2,0,1             # sırayı değiştirerek kur
+#   ./provision-templates.sh                           # tüm template'leri sırayla kur
+#   ./provision-templates.sh --templates 0,2           # sadece 0 ve 2 numaralı template'leri kur
+#   ./provision-templates.sh --templates debian-12,ubuntu-24  # isme göre seçim
+#   ./provision-templates.sh --order 2,0,1             # sırayı değiştirerek kur
 # ============================================================
+
+# ------------------------------------------------------------
+# TEMPLATE LİSTESİ
+# ------------------------------------------------------------
+TEMPLATES=(
+  "ubuntu-24-cloud|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|noble-server-cloudimg-amd64.img|local-lvm|vmbr0|2048"
+  "debian-12-cloud|https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2|debian-12-genericcloud-amd64.qcow2|local-lvm|vmbr0|2048"
+  "ubuntu-22-cloud|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|jammy-server-cloudimg-amd64.img|local-lvm|vmbr0|2048"
+)
+
+MIN_TEMPLATE_VMID=100
+MAX_TEMPLATE_VMID=99999
 
 DEFAULT_IMG_DIR="/var/lib/vz/template/qemu"
 DEFAULT_STORAGE="local-lvm"
@@ -70,7 +82,7 @@ parse_arguments() {
 if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
   echo "bu script root olarak çalışmalı (sudo ./script.sh)"
   exit 1
-fi
+fi`
 
 # parametreleri parse et
 parse_arguments "$@"
@@ -262,51 +274,67 @@ make_template() {
 
 # ------------------------------------------------------------
 # cluster-wide VMID seçimi - cluster'daki tüm node'larda boş base ara
+#  - base'leri 100, 200, 300, ... şeklinde dener
+#  - tüm template'ler için contiguous blok bulur
+#  - hiçbir VMID MAX_TEMPLATE_VMID (99999) üstüne çıkmaz
 # ------------------------------------------------------------
 pick_vmid_base() {
-  # elle VMID_BASE geldiyse onu kullan
+  # Elle VMID_BASE environment variable ile geldiyse onu kullan
   if [[ -n "${VMID_BASE:-}" ]]; then
     echo "$VMID_BASE"
     return
   fi
 
-  local candidates=(9000 10000 11000 12000 13000 14000)
-  local template_count=${#ACTIVE_TEMPLATES[@]}  # dinamik template sayısı
+  local template_count=${#ACTIVE_TEMPLATES[@]}  # kaç template kurulacak?
+  local min_vmid="${MIN_TEMPLATE_VMID}"
+  local max_vmid="${MAX_TEMPLATE_VMID}"
 
-  for base in "${candidates[@]}"; do
-    # bu base daha önce occupied olarak işaretlendiyse skip et
+  # Bütün template'leri aynı blokta tutmak için:
+  # base + (template_count - 1) <= max_vmid olmalı
+  local max_base=$((max_vmid - template_count + 1))
+  if (( max_base < min_vmid )); then
+    echo "DEBUG: No possible base in ${min_vmid}-${max_vmid} for ${template_count} templates" >&2
+    echo "none"
+    return
+  fi
+
+  # max_base'i en yakın 100'lüğe AŞAĞI yuvarla (100, 200, ... gibi gidiyoruz)
+  max_base=$(( (max_base / 100) * 100 ))
+
+  echo "DEBUG: pick_vmid_base: min_vmid=${min_vmid}, max_vmid=${max_vmid}, template_count=${template_count}, max_base=${max_base}" >&2
+
+  local base
+  for base in $(seq "${min_vmid}" 100 "${max_base}"); do
     local blacklist_file="/tmp/.vmid_base_${base}_occupied"
-    
-    # DEBUG: test edelim
+
     echo "DEBUG: Checking base $base, blacklist file: $blacklist_file" >&2
-    
-    # Explicit test
-    if [[ -f "/tmp/.vmid_base_9000_occupied" ]]; then
-      echo "DEBUG: EXPLICIT TEST: /tmp/.vmid_base_9000_occupied EXISTS" >&2
-    else
-      echo "DEBUG: EXPLICIT TEST: /tmp/.vmid_base_9000_occupied DOES NOT EXIST" >&2
-    fi
-    
+
+    # Daha önce başarısız olup blacklist edilen base'leri atla
     if [[ -f "$blacklist_file" ]]; then
       echo "DEBUG: Base $base is blacklisted, skipping" >&2
       continue
-    else
-      echo "DEBUG: Base $base is NOT blacklisted" >&2
     fi
 
     local all_free=1
-    # base'den başlayarak template_count kadar VMID'yi kontrol et
+
+    # base, base+1, ... base+(template_count-1) id'leri boş mu?
     for off in $(seq 0 $((template_count - 1))); do
       local id=$((base + off))
-      # cluster'da bu VMID varsa (herhangi bir node'da)
+
+      # Güvenlik: id max_vmid'i geçmesin
+      if (( id > max_vmid )); then
+        echo "DEBUG: ID $id > max_vmid $max_vmid, base $base is invalid" >&2
+        all_free=0
+        break
+      fi
+
       if [[ -f "/etc/pve/qemu-server/${id}.conf" ]]; then
         echo "DEBUG: VMID $id has config file, base $base not available" >&2
         all_free=0
         break
       fi
     done
-    
-    # bu base'deki tüm VMID'ler boşsa, bunu kullan
+
     if [[ $all_free -eq 1 ]]; then
       echo "DEBUG: Base $base selected!" >&2
       echo "$base"
@@ -314,18 +342,9 @@ pick_vmid_base() {
     fi
   done
 
-  # hepsi doluysa
+  echo "DEBUG: No free base found in ${min_vmid}-${max_base}" >&2
   echo "none"
 }
-
-# ------------------------------------------------------------
-# TEMPLATE LİSTESİ
-# ------------------------------------------------------------
-TEMPLATES=(
-  "ubuntu-24-cloud|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|noble-server-cloudimg-amd64.img|local-lvm|vmbr0|2048"
-  "debian-12-cloud|https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2|debian-12-genericcloud-amd64.qcow2|local-lvm|vmbr0|2048"
-  "ubuntu-22-cloud|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|jammy-server-cloudimg-amd64.img|local-lvm|vmbr0|2048"
-)
 
 # ------------------------------------------------------------
 # template seçim/sıralama fonksiyonu
@@ -438,11 +457,11 @@ while [[ $attempt -lt $max_attempts ]]; do
     log "  (no blacklisted bases)"
   fi
   
-  # Manuel test: 9000 blacklist'te mi?
-  if [[ -f "/tmp/.vmid_base_9000_occupied" ]]; then
-    log "MANUAL CHECK: Base 9000 IS blacklisted (file exists)"
+  # Manuel test: 100 blacklist'te mi?
+  if [[ -f "/tmp/.vmid_base_100_occupied" ]]; then
+    log "MANUAL CHECK: Base 100 IS blacklisted (file exists)"
   else
-    log "MANUAL CHECK: Base 9000 is NOT blacklisted (file does not exist)"
+    log "MANUAL CHECK: Base 100 is NOT blacklisted (file does not exist)"
   fi
   
   # Sadece stdout yakala, stderr terminale gitsin (debug için)
