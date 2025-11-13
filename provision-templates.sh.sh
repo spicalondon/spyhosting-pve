@@ -17,7 +17,7 @@ set -euo pipefail
 # ============================================================
 
 DEFAULT_IMG_DIR="/var/lib/vz/template/qemu"
-DEFAULT_STORAGE="local"
+DEFAULT_STORAGE="local-lvm"
 DEFAULT_BRIDGE="vmbr0"
 DEFAULT_MEMORY=2048
 
@@ -308,9 +308,9 @@ pick_vmid_base() {
 # TEMPLATE LİSTESİ
 # ------------------------------------------------------------
 TEMPLATES=(
-  "ubuntu-24-cloud|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|noble-server-cloudimg-amd64.img|local|vmbr0|2048"
-  "debian-12-cloud|https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2|debian-12-genericcloud-amd64.qcow2|local|vmbr0|2048"
-  "ubuntu-22-cloud|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|jammy-server-cloudimg-amd64.img|local|vmbr0|2048"
+  "ubuntu-24-cloud|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|noble-server-cloudimg-amd64.img|local-lvm|vmbr0|2048"
+  "debian-12-cloud|https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2|debian-12-genericcloud-amd64.qcow2|local-lvm|vmbr0|2048"
+  "ubuntu-22-cloud|https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img|jammy-server-cloudimg-amd64.img|local-lvm|vmbr0|2048"
 )
 
 # ------------------------------------------------------------
