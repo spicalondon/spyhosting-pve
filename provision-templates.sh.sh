@@ -203,16 +203,30 @@ import_disk_if_needed() {
   local img_path="$2"
   local storage="$3"
 
-  local target="/var/lib/vz/images/$vmid/vm-$vmid-disk-0.raw"
-  if [[ -f "$target" ]]; then
-    log "Disk already imported for VM $vmid: $target (skip import)"
+  # Storage tipine göre disk yolunu belirle
+  local disk_exists=false
+  if [[ "$storage" == "local-lvm" ]]; then
+    # LVM için logical volume kontrolü
+    if lvs "pve/vm-$vmid-disk-0" >/dev/null 2>&1; then
+      disk_exists=true
+    fi
+  else
+    # Dosya tabanlı storage için
+    local target="/var/lib/vz/images/$vmid/vm-$vmid-disk-0.raw"
+    if [[ -f "$target" ]]; then
+      disk_exists=true
+    fi
+  fi
+
+  if $disk_exists; then
+    log "Disk already imported for VM $vmid (skip import)"
   else
     log "Importing disk $img_path -> VM $vmid on storage $storage"
     qm importdisk "$vmid" "$img_path" "$storage"
   fi
 
   log "Attaching disk as scsi0 on VM $vmid"
-  qm set "$vmid" --scsihw virtio-scsi-pci --scsi0 "$storage:$vmid/vm-$vmid-disk-0.raw"
+  qm set "$vmid" --scsihw virtio-scsi-pci --scsi0 "$storage:vm-$vmid-disk-0"
 }
 
 # ------------------------------------------------------------
@@ -450,15 +464,18 @@ while [[ $attempt -lt $max_attempts ]]; do
     VMID=$((VMID_BASE + idx))
     idx=$((idx + 1))
 
+    # VM adını t{VMID}-{TEMPLATE_NAME} formatında oluştur
+    VM_DISPLAY_NAME="t${VMID}-${VMNAME}"
+
     IMG_PATH="${DEFAULT_IMG_DIR}/${IMG_FILE}"
 
-    log "--- processing template: $VMID ($VMNAME) ---"
+    log "--- processing template: $VMID ($VM_DISPLAY_NAME) ---"
 
     download_if_missing "$IMG_URL" "$IMG_PATH"
     customize_cloud_image "$IMG_PATH"
 
     create_result=0
-    create_or_update_vm "$VMID" "$VMNAME" "$MEMORY_MB" "$BRIDGE" || create_result=$?
+    create_or_update_vm "$VMID" "$VM_DISPLAY_NAME" "$MEMORY_MB" "$BRIDGE" || create_result=$?
 
     if [[ $create_result -eq 1 ]]; then
       log "Skipping VMID $VMID (belongs to another node)"
