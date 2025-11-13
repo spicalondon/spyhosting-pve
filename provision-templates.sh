@@ -37,6 +37,7 @@ DEFAULT_MEMORY=2048
 # kurulum sırası/seçimi için parametreler
 TEMPLATE_SELECTION=""
 TEMPLATE_ORDER=""
+VMID_BASE=""
 
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 
@@ -54,6 +55,10 @@ parse_arguments() {
         TEMPLATE_ORDER="$2"
         shift 2
         ;;
+      --base)
+        VMID_BASE="$2"
+        shift 2
+        ;;
       --help|-h)
         echo "Kullanım: $0 [OPTIONS]"
         echo ""
@@ -62,12 +67,15 @@ parse_arguments() {
         echo "                       Örnek: --templates 0,2  veya  --templates debian-12,ubuntu-24"
         echo "  --order <list>       Template kurulum sırasını belirt (indeksler, virgülle ayrılmış)"
         echo "                       Örnek: --order 2,0,1"
+        echo "  --base <vmid>        VMID başlangıç numarası (örnek: 100, 200, 500)"
+        echo "                       Örnek: --base 200  (200, 201, 202, 203... şeklinde kurar)"
         echo "  --help               Bu yardım mesajını göster"
         echo ""
         echo "Mevcut template'ler:"
         echo "  [0] ubuntu-24-cloud"
-        echo "  [1] debian-12-cloud"
-        echo "  [2] ubuntu-22-cloud"
+        echo "  [1] ubuntu-22-cloud"
+        echo "  [2] ubuntu-20-cloud"
+        echo "  [3] debian-12-cloud"
         exit 0
         ;;
       *)
