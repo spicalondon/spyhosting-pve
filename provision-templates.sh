@@ -470,40 +470,45 @@ ensure_dir "$DEFAULT_IMG_DIR"
 # retry loop for finding available base
 attempt=0
 max_attempts=5
+
+# --base parametresi ile geldi mi kontrol et
+USER_SPECIFIED_BASE=""
+if [[ -n "$VMID_BASE" ]]; then
+  USER_SPECIFIED_BASE="$VMID_BASE"
+  log "User specified VMID base: $VMID_BASE"
+fi
+
 while [[ $attempt -lt $max_attempts ]]; do
   log "=== Attempt $((attempt + 1)) of $max_attempts ==="
-  
-  # Her attempt'te VMID_BASE'i temizle
-  unset VMID_BASE
-  
-  # blacklist durumunu göster
-  log "Current blacklist status:"
-  if ls /tmp/.vmid_base_*_occupied >/dev/null 2>&1; then
-    for f in /tmp/.vmid_base_*_occupied; do
-      log "  - $(basename "$f")"
-    done
-  else
-    log "  (no blacklisted bases)"
-  fi
-  
-  # Manuel test: 100 blacklist'te mi?
-  if [[ -f "/tmp/.vmid_base_100_occupied" ]]; then
-    log "MANUAL CHECK: Base 100 IS blacklisted (file exists)"
-  else
-    log "MANUAL CHECK: Base 100 is NOT blacklisted (file does not exist)"
-  fi
-  
-  # Sadece stdout yakala, stderr terminale gitsin (debug için)
-  log "About to call pick_vmid_base()..."
-  VMID_BASE=$(pick_vmid_base)
-  log "pick_vmid_base() returned: $VMID_BASE"
-  
-  if [[ "$VMID_BASE" == "none" ]]; then
-    log "UYARI: uygun VMID base bulunamadı. Çıkıyorum."
-    exit 1
-  fi
 
-  log "Selected VMID base: $VMID_BASE"
+  # Eğer kullanıcı --base belirttiyse, onu kullan
+  if [[ -n "$USER_SPECIFIED_BASE" ]]; then
+    VMID_BASE="$USER_SPECIFIED_BASE"
+    log "Using user-specified VMID base: $VMID_BASE"
+  else
+    # Otomatik seçim yap
+    # blacklist durumunu göster
+    log "Current blacklist status:"
+    if ls /tmp/.vmid_base_*_occupied >/dev/null 2>&1; then
+      for f in /tmp/.vmid_base_*_occupied; do
+        log "  - $(basename "$f")"
+      done
+    else
+      log "  (no blacklisted bases)"
+    fi
+
+    # Sadece stdout yakala, stderr terminale gitsin (debug için)
+    log "About to call pick_vmid_base()..."
+    VMID_BASE=$(pick_vmid_base)
+    log "pick_vmid_base() returned: $VMID_BASE"
+
+    if [[ "$VMID_BASE" == "none" ]]; then
+      log "UYARI: uygun VMID base bulunamadı. Çıkıyorum."
+      exit 1
+    fi
+
+    log "Selected VMID base: $VMID_BASE"
+  fi
 
   success=true
   idx=0
