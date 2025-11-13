@@ -8,6 +8,12 @@ set -euo pipefail
 #  - image'i patch'ler (root + ssh_pwauth)
 #  - VM oluşturup template'e çevirir
 #  - cluster'da 9000 doluysa otomatik 10000, sonra 11000...
+#
+# Kullanım:
+#   ./provision-templates.sh.sh                           # tüm template'leri sırayla kur
+#   ./provision-templates.sh.sh --templates 0,2           # sadece 0 ve 2 numaralı template'leri kur
+#   ./provision-templates.sh.sh --templates debian-12,ubuntu-24  # isme göre seçim
+#   ./provision-templates.sh.sh --order 2,0,1             # sırayı değiştirerek kur
 # ============================================================
 
 DEFAULT_IMG_DIR="/var/lib/vz/template/qemu"
@@ -15,13 +21,59 @@ DEFAULT_STORAGE="local"
 DEFAULT_BRIDGE="vmbr0"
 DEFAULT_MEMORY=2048
 
+# kurulum sırası/seçimi için parametreler
+TEMPLATE_SELECTION=""
+TEMPLATE_ORDER=""
+
 log() { echo "[$(date +%H:%M:%S)] $*"; }
+
+# ------------------------------------------------------------
+# parametre parse
+# ------------------------------------------------------------
+parse_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --templates)
+        TEMPLATE_SELECTION="$2"
+        shift 2
+        ;;
+      --order)
+        TEMPLATE_ORDER="$2"
+        shift 2
+        ;;
+      --help|-h)
+        echo "Kullanım: $0 [OPTIONS]"
+        echo ""
+        echo "Seçenekler:"
+        echo "  --templates <list>   Kurulacak template'leri belirt (indeks veya isim, virgülle ayrılmış)"
+        echo "                       Örnek: --templates 0,2  veya  --templates debian-12,ubuntu-24"
+        echo "  --order <list>       Template kurulum sırasını belirt (indeksler, virgülle ayrılmış)"
+        echo "                       Örnek: --order 2,0,1"
+        echo "  --help               Bu yardım mesajını göster"
+        echo ""
+        echo "Mevcut template'ler:"
+        echo "  [0] ubuntu-24-cloud"
+        echo "  [1] debian-12-cloud"
+        echo "  [2] ubuntu-22-cloud"
+        exit 0
+        ;;
+      *)
+        echo "Bilinmeyen parametre: $1"
+        echo "Yardım için: $0 --help"
+        exit 1
+        ;;
+    esac
+  done
+}
 
 # root kontrolü
 if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
   echo "bu script root olarak çalışmalı (sudo ./script.sh)"
   exit 1
 fi
+
+# parametreleri parse et
+parse_arguments "$@"
 
 # ------------------------------------------------------------
 # apt helper
@@ -205,7 +257,7 @@ pick_vmid_base() {
   fi
 
   local candidates=(9000 10000 11000 12000 13000 14000)
-  local template_count=3  # bu script 3 template yapıyor
+  local template_count=${#ACTIVE_TEMPLATES[@]}  # dinamik template sayısı
 
   for base in "${candidates[@]}"; do
     # bu base daha önce occupied olarak işaretlendiyse skip et
@@ -262,6 +314,85 @@ TEMPLATES=(
 )
 
 # ------------------------------------------------------------
+# template seçim/sıralama fonksiyonu
+# ------------------------------------------------------------
+build_template_list() {
+  local -a result=()
+
+  # --order parametresi varsa, sadece o sırayı kullan
+  if [[ -n "$TEMPLATE_ORDER" ]]; then
+    log "Template kurulum sırası: $TEMPLATE_ORDER"
+    IFS=',' read -ra INDICES <<<"$TEMPLATE_ORDER"
+    for idx in "${INDICES[@]}"; do
+      idx=$(echo "$idx" | xargs)  # trim whitespace
+      if [[ "$idx" =~ ^[0-9]+$ ]] && [[ $idx -lt ${#TEMPLATES[@]} ]]; then
+        result+=("${TEMPLATES[$idx]}")
+      else
+        log "UYARI: geçersiz indeks '$idx', atlıyorum"
+      fi
+    done
+    echo "${result[@]}"
+    return
+  fi
+
+  # --templates parametresi varsa, seçili template'leri al
+  if [[ -n "$TEMPLATE_SELECTION" ]]; then
+    log "Seçili template'ler: $TEMPLATE_SELECTION"
+    IFS=',' read -ra SELECTION <<<"$TEMPLATE_SELECTION"
+
+    for sel in "${SELECTION[@]}"; do
+      sel=$(echo "$sel" | xargs)  # trim whitespace
+
+      # sayısal indeks mi?
+      if [[ "$sel" =~ ^[0-9]+$ ]]; then
+        if [[ $sel -lt ${#TEMPLATES[@]} ]]; then
+          result+=("${TEMPLATES[$sel]}")
+        else
+          log "UYARI: geçersiz indeks '$sel', atlıyorum"
+        fi
+      else
+        # isim ile arama
+        local found=0
+        for tmpl in "${TEMPLATES[@]}"; do
+          IFS="|" read -r VMNAME _ <<<"$tmpl"
+          if [[ "$VMNAME" == "$sel" ]]; then
+            result+=("$tmpl")
+            found=1
+            break
+          fi
+        done
+        if [[ $found -eq 0 ]]; then
+          log "UYARI: '$sel' isimli template bulunamadı, atlıyorum"
+        fi
+      fi
+    done
+
+    echo "${result[@]}"
+    return
+  fi
+
+  # parametre yoksa tüm template'leri döndür
+  echo "${TEMPLATES[@]}"
+}
+
+# Aktif template listesini oluştur
+readarray -t ACTIVE_TEMPLATES < <(build_template_list)
+
+if [[ ${#ACTIVE_TEMPLATES[@]} -eq 0 ]]; then
+  log "HATA: Kurulacak hiç template yok!"
+  exit 1
+fi
+
+log "Kurulacak template sayısı: ${#ACTIVE_TEMPLATES[@]}"
+
+# Template listesini göster
+log "Template'ler:"
+for i in "${!ACTIVE_TEMPLATES[@]}"; do
+  IFS="|" read -r VMNAME _ <<<"${ACTIVE_TEMPLATES[$i]}"
+  log "  [$i] $VMNAME"
+done
+
+# ------------------------------------------------------------
 # ana akış
 # ------------------------------------------------------------
 log "==> Cloud templates provisioning started on host: $(hostname)"
@@ -312,7 +443,7 @@ while [[ $attempt -lt $max_attempts ]]; do
 
   success=true
   idx=0
-  for entry in "${TEMPLATES[@]}"; do
+  for entry in "${ACTIVE_TEMPLATES[@]}"; do
     IFS="|" read -r VMNAME IMG_URL IMG_FILE STORAGE BRIDGE MEMORY_MB <<<"$entry"
     VMID=$((VMID_BASE + idx))
     idx=$((idx + 1))
