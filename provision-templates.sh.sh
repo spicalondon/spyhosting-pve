@@ -331,7 +331,8 @@ build_template_list() {
         log "UYARI: geçersiz indeks '$idx', atlıyorum"
       fi
     done
-    echo "${result[@]}"
+    # her elemanı ayrı satırda yazdır
+    printf '%s\n' "${result[@]}"
     return
   fi
 
@@ -367,12 +368,13 @@ build_template_list() {
       fi
     done
 
-    echo "${result[@]}"
+    # her elemanı ayrı satırda yazdır
+    printf '%s\n' "${result[@]}"
     return
   fi
 
-  # parametre yoksa tüm template'leri döndür
-  echo "${TEMPLATES[@]}"
+  # parametre yoksa tüm template'leri döndür (her biri ayrı satırda)
+  printf '%s\n' "${TEMPLATES[@]}"
 }
 
 # Aktif template listesini oluştur
