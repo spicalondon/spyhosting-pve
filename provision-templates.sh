@@ -82,7 +82,7 @@ parse_arguments() {
 if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
   echo "bu script root olarak çalışmalı (sudo ./script.sh)"
   exit 1
-fi`
+fi
 
 # parametreleri parse et
 parse_arguments "$@"
